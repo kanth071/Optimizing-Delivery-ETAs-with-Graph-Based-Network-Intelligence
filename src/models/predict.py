@@ -34,7 +34,39 @@ ALL_MODEL_NAMES = [
     "XGBoost", "LightGBM",
 ]
 
+def ensure_compatible_models(model_dir="data/processed/models"):
+    need_retrain = False
+    
+    # 1. Check if summary.json exists
+    summary_path = os.path.join(model_dir, "summary.json")
+    if not os.path.exists(summary_path):
+        need_retrain = True
+    else:
+        # 2. Try loading all models and check if any throws an error
+        for nm in ALL_MODEL_NAMES:
+            p = os.path.join(model_dir, nm+".pkl")
+            if not os.path.exists(p):
+                need_retrain = True
+                break
+            try:
+                with open(p, "rb") as f:
+                    pickle.load(f)
+            except Exception as e:
+                print(f"[PREDICT] Failed to load {nm}.pkl due to environment mismatch: {e}. Retraining will be triggered.")
+                need_retrain = True
+                break
+                
+    if need_retrain:
+        print("[FALLBACK] Environment mismatch, unpickling failure, or missing models. Auto-retraining perfectly compatible models on the fly...")
+        try:
+            from src.models.train_model import train_all
+            train_all(processed_path="data/processed/logistics_processed.csv", model_dir=model_dir)
+            print("[FALLBACK] Auto-retraining finished successfully. All models are now fully compatible.")
+        except Exception as te:
+            print(f"[ERROR] Auto-retraining failed: {te}")
+
 def load_best_model(model_dir="data/processed/models"):
+    ensure_compatible_models(model_dir)
     with open(os.path.join(model_dir,"summary.json")) as f:
         summary = json.load(f)
     best_name = summary["best_model_name"]
@@ -44,6 +76,7 @@ def load_best_model(model_dir="data/processed/models"):
     return model, best_name, summary
 
 def load_all_models(model_dir="data/processed/models"):
+    ensure_compatible_models(model_dir)
     models = {}
     for nm in ALL_MODEL_NAMES:
         p = os.path.join(model_dir, nm+".pkl")

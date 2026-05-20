@@ -593,7 +593,7 @@ def load_graph(df):
 def load_centrality(_G):
     return compute_centrality(_G)
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def load_models():
     return load_all_models()
 
