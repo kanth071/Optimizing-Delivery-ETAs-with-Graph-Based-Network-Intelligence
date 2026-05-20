@@ -1,0 +1,30 @@
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+
+# Python Caches & Compiled Files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# IDE and Project Tool Caches
+.vscode/
+.idea/
+.gemini/
+.obsidian/
+.DS_Store
+
+# Temporary developer scratchpad / logs
+scratch/
+*.log
+tmp/
+temp/

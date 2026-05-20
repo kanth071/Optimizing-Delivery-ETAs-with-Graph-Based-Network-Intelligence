@@ -1,0 +1,23 @@
+# Exclude local caches and virtual environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+.gemini/
+
+# Exclude local logs and temporary developer directories
+.streamlit/config.toml.local
+logs/
+*.log
+scratch/
+data/raw/
+tmp/
+temp/
