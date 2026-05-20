@@ -538,7 +538,7 @@ def draw_route_optimization_map(result):
     return fig
 
 
-@st.cache_resource(show_spinner="Rendering geographic logistics overlay...")
+@st.cache_resource(show_spinner=False)
 def render_mapbox_overlay(cdf_data):
     map_hubs = []
     for name, coords in HUB_COORDS.items():
@@ -581,23 +581,23 @@ def render_mapbox_overlay(cdf_data):
 # ── CACHED TELEMETRY LOADERS ───────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(show_spinner="Assembling real-time network database...")
+@st.cache_data(show_spinner=False)
 def load_data():
     return pd.read_csv("data/processed/logistics_processed.csv", parse_dates=["shipment_datetime"])
 
-@st.cache_resource(show_spinner="Assembling logistics graph network topology...")
+@st.cache_resource(show_spinner=False)
 def load_graph(df):
     return build_graph(df)
 
-@st.cache_data(show_spinner="Computing network centralities and scores...")
+@st.cache_data(show_spinner=False)
 def load_centrality(_G):
     return compute_centrality(_G)
 
-@st.cache_data(show_spinner="Loading ensembled machine learning models...")
+@st.cache_data(show_spinner=False)
 def load_models():
     return load_all_models()
 
-@st.cache_data(show_spinner="Extracting model stats summary...")
+@st.cache_data(show_spinner=False)
 def load_summary():
     with open("data/processed/models/summary.json") as f:
         return json.load(f)
