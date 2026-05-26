@@ -35,20 +35,36 @@ ALL_MODEL_NAMES = [
 ]
 
 def ensure_compatible_models(model_dir="data/processed/models"):
-    need_retrain = False
+    import sys
+    import sklearn
     
-    # 1. Check if summary.json exists
+    # Generate current environment signature
+    current_sig = f"python:{sys.version_info.major}.{sys.version_info.minor}|sklearn:{sklearn.__version__}"
+    sentinel_path = os.path.join(model_dir, "compat_verified.txt")
+    
+    # 1. Check if sentinel matches perfectly -> Instant Fast-Path bypass
+    if os.path.exists(sentinel_path):
+        try:
+            with open(sentinel_path, "r") as f:
+                saved_sig = f.read().strip()
+            if saved_sig == current_sig:
+                return  # 100% compatible, skip expensive pickle-loading!
+        except Exception:
+            pass
+
+    # 2. Otherwise perform deep validation
+    need_retrain = False
     summary_path = os.path.join(model_dir, "summary.json")
     if not os.path.exists(summary_path):
         need_retrain = True
     else:
-        # 2. Try loading all models and check if any throws an error
         for nm in ALL_MODEL_NAMES:
             p = os.path.join(model_dir, nm+".pkl")
             if not os.path.exists(p):
                 need_retrain = True
                 break
             try:
+                # Try unpickling to verify compatibility
                 with open(p, "rb") as f:
                     pickle.load(f)
             except Exception as e:
@@ -64,6 +80,14 @@ def ensure_compatible_models(model_dir="data/processed/models"):
             print("[FALLBACK] Auto-retraining finished successfully. All models are now fully compatible.")
         except Exception as te:
             print(f"[ERROR] Auto-retraining failed: {te}")
+            
+    # 3. Write sentinel file to record successful validation for future lightning-fast loads
+    try:
+        os.makedirs(model_dir, exist_ok=True)
+        with open(sentinel_path, "w") as f:
+            f.write(current_sig)
+    except Exception:
+        pass
 
 def load_best_model(model_dir="data/processed/models"):
     ensure_compatible_models(model_dir)

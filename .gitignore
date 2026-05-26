@@ -28,3 +28,6 @@ scratch/
 *.log
 tmp/
 temp/
+
+# Model compatibility sentinel
+compat_verified.txt
