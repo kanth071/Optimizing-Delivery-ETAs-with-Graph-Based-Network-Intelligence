@@ -352,9 +352,11 @@ def draw_plotly_network(G, cdf_data, highlight_path=None):
             size=node_size,
             colorbar=dict(
                 thickness=15,
-                title='Bottleneck Score',
+                title=dict(
+                    text='Bottleneck Score',
+                    side='right'
+                ),
                 xanchor='left',
-                titleside='right',
                 tickfont=dict(color='#E2E8F0')
             ),
             line_width=2,
