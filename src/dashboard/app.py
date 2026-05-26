@@ -604,14 +604,22 @@ def load_summary():
     with open("data/processed/models/summary.json") as f:
         return json.load(f)
 
+@st.cache_data(show_spinner=False)
+def load_risky_routes(df):
+    return detect_risky_routes(df)
+
+@st.cache_data(show_spinner=False)
+def load_summary_kpis(df):
+    return summary_kpis(df)
+
 # Initialize data and dependencies
 df_full = load_data()
 G       = load_graph(df_full)
 cdf     = load_centrality(G)
 models  = load_models()
 summary = load_summary()
-risky   = detect_risky_routes(df_full)
-kpis    = summary_kpis(df_full)
+risky   = load_risky_routes(df_full)
+kpis    = load_summary_kpis(df_full)
 critical, moderate, low_risk = classify_hubs(cdf)
 
 
@@ -1203,7 +1211,6 @@ elif page_selection == "Bottleneck Detection":
     </div>
     """, unsafe_allow_html=True)
 
-    critical, moderate, low_risk = classify_hubs(cdf)
     c_c, c_m, c_l = st.columns(3)
     
     with c_c:
@@ -1370,7 +1377,6 @@ elif page_selection == "AI Recommendations":
     </div>
     """, unsafe_allow_html=True)
 
-    critical, moderate, low_risk = classify_hubs(cdf)
     c_rec1, c_rec2 = st.columns(2)
     
     with c_rec1:
