@@ -4,9 +4,15 @@ port = 8501
 enableCORS = false
 enableXsrfProtection = true
 fileWatcherType = "none"
+maxUploadSize = 5
+maxMessageSize = 200
+runOnSave = false
 
 [browser]
 gatherUsageStats = false
+
+[runner]
+fastReruns = true
 
 [theme]
 primaryColor = "#22D3EE"

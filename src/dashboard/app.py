@@ -14,9 +14,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import json, pickle, io, time
 
 # ── Project modules ────────────────────────────────────────────────────────────
@@ -27,7 +24,6 @@ from src.graph.route_optimizer    import compare_routes, top_routes_by_volume, o
 from src.models.predict           import load_best_model, load_all_models, build_feature_row, HUBS
 from src.utils.helpers            import (generate_business_insights, sla_analysis,
                                           summary_kpis, format_eta, route_performance_summary)
-from src.visualization.network_visuals import draw_logistics_network, draw_bottleneck_subgraph
 
 # ── Geolocation coordinate database for our 20 Indian cities ──────────────────
 HUB_COORDS = {
@@ -52,7 +48,10 @@ st.set_page_config(
 )
 
 # ── High-Fidelity Custom CSS styling (Premium Sidebar & Dark Theme Overrides) ──
-st.markdown("""
+# Cache the CSS string to avoid re-building it every rerun
+@st.cache_resource(show_spinner=False)
+def _get_premium_css():
+    return """
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
   
@@ -256,7 +255,9 @@ st.markdown("""
     font-size: 0.92rem;
   }
 </style>
-""", unsafe_allow_html=True)
+"""
+
+st.markdown(_get_premium_css(), unsafe_allow_html=True)
 
 
 # ─── HIGH-PERFORMANCE PLOTLY NETWORK VISUALIZATIONS (Instant Client-side GPU Render) ───
@@ -580,12 +581,25 @@ def render_mapbox_overlay(cdf_data):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── CACHED TELEMETRY LOADERS ───────────────────────────────────────────────────
+# ── CACHED TELEMETRY LOADERS & VISUALIZATION BUILDERS ─────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
 def load_data():
-    return pd.read_csv("data/processed/logistics_processed.csv", parse_dates=["shipment_datetime"])
+    # Only load the columns actually used by the dashboard, graph builder, and analytics
+    _USED_COLS = [
+        "shipment_id", "source_hub", "destination_hub", "route_id",
+        "route_type", "vehicle_type", "route_distance", "traffic_level",
+        "weather_condition", "congestion_score", "num_stops", "hub_load",
+        "hub_capacity", "shipment_priority", "day_of_week",
+        "delivery_time_hrs", "delay_minutes", "sla_breach",
+        "shipment_datetime", "hour_of_day", "weather_risk",
+    ]
+    return pd.read_csv(
+        "data/processed/logistics_processed.csv",
+        usecols=_USED_COLS,
+        parse_dates=["shipment_datetime"],
+    )
 
 @st.cache_resource(show_spinner=False)
 def load_graph(df):
@@ -612,6 +626,222 @@ def load_risky_routes(df):
 def load_summary_kpis(df):
     return summary_kpis(df)
 
+@st.cache_data(show_spinner=False)
+def get_filtered_route_stats(_df_full, corridor_search, f_rain, f_traffic, f_fog, f_risk):
+    # Build a boolean mask instead of copying the full dataframe
+    mask = pd.Series(True, index=_df_full.index)
+    
+    if corridor_search:
+        mask &= (_df_full["source_hub"].str.contains(corridor_search, case=False, na=False) | 
+                 _df_full["destination_hub"].str.contains(corridor_search, case=False, na=False))
+    
+    weather_subset = {"Clear", "Cloudy"}
+    if f_rain:
+        weather_subset.update({"Rain", "Heavy Rain"})
+    if f_fog:
+        weather_subset.update({"Fog", "Storm"})
+    mask &= _df_full["weather_condition"].isin(weather_subset)
+
+    if f_risk:
+        mask &= _df_full["delay_minutes"] > 120
+        
+    return route_performance_summary(_df_full.loc[mask])
+
+@st.cache_resource(show_spinner=False)
+def get_dashboard_scatter_chart(_route_stats):
+    fig_scatter = px.scatter(
+        _route_stats,
+        x="avg_delivery_hrs",
+        y="avg_delay_min",
+        size="shipment_count",
+        color="avg_delay_min",
+        hover_name="route_label",
+        labels={
+            "avg_delivery_hrs": "Avg Delivery Time (hours)",
+            "avg_delay_min": "Avg Delay (minutes)",
+            "shipment_count": "Shipment Volume"
+        },
+        color_continuous_scale="Purples",
+        size_max=35,
+    )
+    fig_scatter.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#F3F4F6", family="Outfit"),
+        xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=380,
+    )
+    return fig_scatter
+
+@st.cache_resource(show_spinner=False)
+def get_sla_gauge_chart(on_time_pct):
+    fig_gauge = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = on_time_pct,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "Target compliance limit: 95.0%", 'font': {'size': 13, 'color': '#9CA3AF'}},
+        number = {'font': {'color': '#F3F4F6', 'size': 50}},
+        gauge = {
+            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#F3F4F6"},
+            'bar': {'color': "#06B6D4"},
+            'bgcolor': "rgba(17, 24, 39, 0.5)",
+            'borderwidth': 1,
+            'bordercolor': "#374151",
+            'steps': [
+                {'range': [0, 80], 'color': 'rgba(239, 68, 68, 0.2)'},
+                {'range': [80, 92], 'color': 'rgba(245, 158, 11, 0.2)'},
+                {'range': [92, 100], 'color': 'rgba(16, 185, 129, 0.2)'}
+            ],
+            'threshold': {
+                'line': {'color': "#10B981", 'width': 4},
+                'thickness': 0.75,
+                'value': 95
+            }
+        }
+    ))
+    fig_gauge.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#F3F4F6", family="Outfit"),
+        margin=dict(t=30, b=10, l=30, r=30),
+        height=300,
+    )
+    return fig_gauge
+
+@st.cache_data(show_spinner=False)
+def cached_compare_routes(_G, source, destination):
+    return compare_routes(_G, source, destination)
+
+@st.cache_resource(show_spinner=False)
+def get_route_optimization_map(_G, source, destination):
+    result = compare_routes(_G, source, destination)
+    return draw_route_optimization_map(result)
+
+@st.cache_data(show_spinner=False)
+def cached_classify_hubs(_cdf):
+    return classify_hubs(_cdf)
+
+@st.cache_resource(show_spinner=False)
+def draw_cached_plotly_network(_G, _cdf, highlight_path=None):
+    return draw_plotly_network(_G, _cdf, highlight_path=highlight_path)
+
+@st.cache_resource(show_spinner=False)
+def draw_cached_plotly_bottleneck_subgraph(_G, _cdf, top_n=8):
+    return draw_plotly_bottleneck_subgraph(_G, _cdf, top_n=top_n)
+
+@st.cache_data(show_spinner=False)
+def cached_sla_analysis(_df_full):
+    return sla_analysis(_df_full)
+
+@st.cache_resource(show_spinner=False)
+def get_sla_chart(sla_df):
+    fig_sla = px.bar(
+        sla_df,
+        x="priority",
+        y="breach_rate_pct",
+        color="breach_rate_pct",
+        color_continuous_scale="Reds",
+        labels={"priority": "Shipment Priority", "breach_rate_pct": "Breach Rate Percentage (%)"}
+    )
+    fig_sla.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#F3F4F6", family="Outfit"),
+        xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=300,
+        coloraxis_showscale=False
+    )
+    return fig_sla
+
+@st.cache_data(show_spinner=False)
+def cached_top_routes_by_volume(_df_full, top_n=15):
+    return top_routes_by_volume(_df_full, top_n=top_n)
+
+@st.cache_resource(show_spinner=False)
+def get_top_routes_chart(_top_routes):
+    fig_routes = px.bar(
+        _top_routes.head(10),
+        y="route_label",
+        x="shipment_count",
+        color="avg_delay_min",
+        color_continuous_scale="Purples",
+        labels={
+            "route_label": "Logistics Corridor",
+            "shipment_count": "Active Freight Volume",
+            "avg_delay_min": "Avg Delay (min)"
+        }
+    )
+    fig_routes.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#F3F4F6", family="Outfit"),
+        xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=380,
+    )
+    return fig_routes
+
+@st.cache_resource(show_spinner=False)
+def get_model_bench_chart(summary):
+    bench_results = summary["results"]
+    bench_df = pd.DataFrame(bench_results)
+    fig_bench = px.bar(
+        bench_df,
+        x="model_name",
+        y=["MAE", "RMSE"],
+        barmode="group",
+        labels={"value": "Error Metric Value (Hours)", "model_name": "Model Architecture"},
+        color_discrete_map={"MAE": "#22D3EE", "RMSE": "#8B5CF6"}
+    )
+    fig_bench.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E2E8F0", family="Outfit"),
+        xaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
+        yaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=280,
+    )
+    return fig_bench
+
+@st.cache_resource(show_spinner=False)
+def get_shap_feature_importance_chart():
+    feat_imp = {
+        "Route Distance": 0.42, "Corridor Traffic": 0.28,
+        "Hub Load": 0.15, "Weather Risk": 0.08,
+        "PageRank Score": 0.05, "Stops Count": 0.02
+    }
+    feat_df = pd.DataFrame(list(feat_imp.items()), columns=["Feature", "SHAP Weight"])
+    fig_feat = px.bar(
+        feat_df,
+        y="Feature",
+        x="SHAP Weight",
+        orientation="h",
+        color="SHAP Weight",
+        color_continuous_scale="Purples",
+        labels={"Feature": "Corridor Metric Feature", "SHAP Weight": "SHAP Global Weight"}
+    )
+    fig_feat.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E2E8F0", family="Outfit"),
+        xaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
+        yaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=280,
+        coloraxis_showscale=False
+    )
+    return fig_feat
+
+@st.cache_data(show_spinner=False)
+def cached_bottleneck_insights(_cdf, _risky):
+    return generate_bottleneck_insights(_cdf, _risky)
+
 # Initialize data and dependencies
 df_full = load_data()
 G       = load_graph(df_full)
@@ -620,7 +850,7 @@ models  = load_models()
 summary = load_summary()
 risky   = load_risky_routes(df_full)
 kpis    = load_summary_kpis(df_full)
-critical, moderate, low_risk = classify_hubs(cdf)
+critical, moderate, low_risk = cached_classify_hubs(cdf)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -704,22 +934,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 
-# Filter dataset dynamically based on corridor search
-df = df_full.copy()
-if corridor_search:
-    df = df[(df["source_hub"].str.contains(corridor_search, case=False)) | 
-            (df["destination_hub"].str.contains(corridor_search, case=False))]
-    
-# Filter by quick filter chips if checked
-weather_subset = ["Clear", "Cloudy"]
-if f_rain:
-    weather_subset.extend(["Rain", "Heavy Rain"])
-if f_fog:
-    weather_subset.extend(["Fog", "Storm"])
-df = df[df["weather_condition"].isin(weather_subset)]
-
-if f_risk:
-    df = df[df["delay_minutes"] > 120]
+# Runtime dataframe copying and filtering removed in favor of cached get_filtered_route_stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -796,69 +1011,16 @@ if page_selection == "Dashboard Overview":
     
     with col_left:
         st.markdown("### 🕸️ Real-time Network Congestion & Volume Analytics")
-        route_stats = route_performance_summary(df)
+        route_stats = get_filtered_route_stats(df_full, corridor_search, f_rain, f_traffic, f_fog, f_risk)
         if not route_stats.empty:
-            fig_scatter = px.scatter(
-                route_stats,
-                x="avg_delivery_hrs",
-                y="avg_delay_min",
-                size="shipment_count",
-                color="avg_delay_min",
-                hover_name="route_label",
-                labels={
-                    "avg_delivery_hrs": "Avg Delivery Time (hours)",
-                    "avg_delay_min": "Avg Delay (minutes)",
-                    "shipment_count": "Shipment Volume"
-                },
-                color_continuous_scale="Purples",
-                size_max=35,
-            )
-            fig_scatter.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#F3F4F6", family="Outfit"),
-                xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-                yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-                margin=dict(t=10, b=10, l=10, r=10),
-                height=380,
-            )
+            fig_scatter = get_dashboard_scatter_chart(route_stats)
             st.plotly_chart(fig_scatter, use_container_width=True)
         else:
             st.info("No route data matching active corridor filters.")
 
     with col_right:
         st.markdown("### 🛡️ SLA Health Indicator Gauge")
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = kpis['on_time_pct'],
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "Target compliance limit: 95.0%", 'font': {'size': 13, 'color': '#9CA3AF'}},
-            number = {'font': {'color': '#F3F4F6', 'size': 50}},
-            gauge = {
-                'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#F3F4F6"},
-                'bar': {'color': "#06B6D4"},
-                'bgcolor': "rgba(17, 24, 39, 0.5)",
-                'borderwidth': 1,
-                'bordercolor': "#374151",
-                'steps': [
-                    {'range': [0, 80], 'color': 'rgba(239, 68, 68, 0.2)'},
-                    {'range': [80, 92], 'color': 'rgba(245, 158, 11, 0.2)'},
-                    {'range': [92, 100], 'color': 'rgba(16, 185, 129, 0.2)'}
-                ],
-                'threshold': {
-                    'line': {'color': "#10B981", 'width': 4},
-                    'thickness': 0.75,
-                    'value': 95
-                }
-            }
-        ))
-        fig_gauge.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#F3F4F6", family="Outfit"),
-            margin=dict(t=30, b=10, l=30, r=30),
-            height=300,
-        )
+        fig_gauge = get_sla_gauge_chart(kpis['on_time_pct'])
         st.plotly_chart(fig_gauge, use_container_width=True)
 
     st.markdown("---")
@@ -1041,13 +1203,13 @@ elif page_selection == "Route Optimization":
         if r_src == r_dst:
             st.warning("⚠️ Origin and Destination hubs are identical. Please select different hubs to compute optimized route options.")
         else:
-            result = compare_routes(G, r_src, r_dst)
+            result = cached_compare_routes(G, r_src, r_dst)
             
             # Centered Map container to make it beautifully aligned and small
             st.markdown("<h4 style='text-align:center; color:#94A3B8; font-size:1.05rem; margin-top:20px; margin-bottom:10px;'>🌐 Route Topography Visualization Map</h4>", unsafe_allow_html=True)
             map_cols = st.columns([1, 2.2, 1])
             with map_cols[1]:
-                st.plotly_chart(draw_route_optimization_map(result), use_container_width=True)
+                st.plotly_chart(get_route_optimization_map(G, r_src, r_dst), use_container_width=True)
                 
             st.markdown("&nbsp;")
             st.markdown(f"### ⚡ Side-by-Side Pathway Optimization Matrix ({r_src} ➔ {r_dst})")
@@ -1174,30 +1336,8 @@ elif page_selection == "Route Optimization":
                 
     with t_o2:
         st.markdown("#### Active Freight Corridor Volume Database")
-        top_routes = top_routes_by_volume(df_full, top_n=15)
-        
-        fig_routes = px.bar(
-            top_routes.head(10),
-            y="route_label",
-            x="shipment_count",
-            color="avg_delay_min",
-            color_continuous_scale="Purples",
-            labels={
-                "route_label": "Logistics Corridor",
-                "shipment_count": "Active Freight Volume",
-                "avg_delay_min": "Avg Delay (min)"
-            }
-        )
-        fig_routes.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#F3F4F6", family="Outfit"),
-            xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-            yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=380,
-        )
-        st.plotly_chart(fig_routes, use_container_width=True)
+        top_routes = cached_top_routes_by_volume(df_full, top_n=15)
+        st.plotly_chart(get_top_routes_chart(top_routes), use_container_width=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1246,18 +1386,17 @@ elif page_selection == "Bottleneck Detection":
     
     with tab_tb:
         st.markdown("#### Hub Network Physics Centrality Database")
-        st.dataframe(cdf.round(4).style.background_gradient(
-            subset=["bottleneck_score", "betweenness_centrality", "pagerank"], cmap="Purples"
-        ), use_container_width=True)
+        # Use plain dataframe instead of slow Pandas Styler for faster rendering
+        st.dataframe(cdf.round(4), use_container_width=True)
         
     with tab_sg:
         top_n = st.slider("Isolate Top N Bottleneck Hubs in Subgraph", 4, 12, 8)
-        fig_sub = draw_plotly_bottleneck_subgraph(G, cdf, top_n=top_n)
+        fig_sub = draw_cached_plotly_bottleneck_subgraph(G, cdf, top_n=top_n)
         st.plotly_chart(fig_sub, use_container_width=True)
         
     with tab_in:
         st.markdown("#### Automated Graph Bottleneck Insights")
-        for ins in generate_bottleneck_insights(cdf, risky):
+        for ins in cached_bottleneck_insights(cdf, risky):
             st.markdown(f'<div class="insight-pill">{ins}</div>', unsafe_allow_html=True)
 
 
@@ -1307,7 +1446,8 @@ elif page_selection == "Network Graph Analytics":
                 st.error("No topological path found")
                 
     with c_g2:
-        fig_net = draw_plotly_network(G, cdf, highlight_path=highlight)
+        highlight_tuple = tuple(highlight) if highlight is not None else None
+        fig_net = draw_cached_plotly_network(G, cdf, highlight_path=highlight_tuple)
         st.plotly_chart(fig_net, use_container_width=True)
 
 
@@ -1322,7 +1462,7 @@ elif page_selection == "SLA & Delay Analytics":
     </div>
     """, unsafe_allow_html=True)
 
-    sla_df = sla_analysis(df_full)
+    sla_df = cached_sla_analysis(df_full)
     c_s1, c_s2 = st.columns([2, 3])
     
     with c_s1:
@@ -1330,25 +1470,7 @@ elif page_selection == "SLA & Delay Analytics":
         st.dataframe(sla_df.round(2), use_container_width=True)
         
     with c_s2:
-        fig_sla = px.bar(
-            sla_df,
-            x="priority",
-            y="breach_rate_pct",
-            color="breach_rate_pct",
-            color_continuous_scale="Reds",
-            labels={"priority": "Shipment Priority", "breach_rate_pct": "Breach Rate Percentage (%)"}
-        )
-        fig_sla.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#F3F4F6", family="Outfit"),
-            xaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-            yaxis=dict(gridcolor="#1F2937", linecolor="#374151"),
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=300,
-            coloraxis_showscale=False
-        )
-        st.plotly_chart(fig_sla, use_container_width=True)
+        st.plotly_chart(get_sla_chart(sla_df), use_container_width=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1464,55 +1586,12 @@ elif page_selection == "Model Performance":
     
     with col_bench_l:
         st.markdown("#### Model Error Analysis Comparisons (MAE / RMSE)")
-        bench_results = summary["results"]
-        bench_df = pd.DataFrame(bench_results)
-        
-        fig_bench = px.bar(
-            bench_df,
-            x="model_name",
-            y=["MAE", "RMSE"],
-            barmode="group",
-            labels={"value": "Error Metric Value (Hours)", "model_name": "Model Architecture"},
-            color_discrete_map={"MAE": "#22D3EE", "RMSE": "#8B5CF6"}
-        )
-        fig_bench.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#E2E8F0", family="Outfit"),
-            xaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
-            yaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=280,
-        )
+        fig_bench = get_model_bench_chart(summary)
         st.plotly_chart(fig_bench, use_container_width=True)
         
     with col_bench_r:
         st.markdown("#### SHAP Feature Importance Score Weights")
-        feat_imp = {
-            "Route Distance": 0.42, "Corridor Traffic": 0.28,
-            "Hub Load": 0.15, "Weather Risk": 0.08,
-            "PageRank Score": 0.05, "Stops Count": 0.02
-        }
-        feat_df = pd.DataFrame(list(feat_imp.items()), columns=["Feature", "SHAP Weight"])
-        fig_feat = px.bar(
-            feat_df,
-            y="Feature",
-            x="SHAP Weight",
-            orientation="h",
-            color="SHAP Weight",
-            color_continuous_scale="Purples",
-            labels={"Feature": "Corridor Metric Feature", "SHAP Weight": "SHAP Global Weight"}
-        )
-        fig_feat.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#E2E8F0", family="Outfit"),
-            xaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
-            yaxis=dict(gridcolor="#1E293B", linecolor="#334155"),
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=280,
-            coloraxis_showscale=False
-        )
+        fig_feat = get_shap_feature_importance_chart()
         st.plotly_chart(fig_feat, use_container_width=True)
 
 

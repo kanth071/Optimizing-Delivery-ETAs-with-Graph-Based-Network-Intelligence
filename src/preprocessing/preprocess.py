@@ -2,27 +2,49 @@
 src/preprocessing/preprocess.py
 ================================
 Production-grade preprocessing pipeline for the logistics delivery dataset.
-
-Steps:
-  1. Load raw CSV
-  2. Remove duplicates
-  3. Handle missing values (median/mode imputation)
-  4. Outlier detection & capping (IQR method)
-  5. Feature engineering (time, route, risk, interaction)
-  6. Encode categoricals (Label Encoding)
-  7. Normalize numerics (MinMax)
-  8. Save processed output
+Supports both synthetic data and real-world Delhivery logistics dataset.
 """
 
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-import os, logging
+import os
+import logging
+import hashlib
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
+
+HUBS = [
+    "Mumbai", "Delhi", "Bangalore", "Chennai", "Hyderabad",
+    "Kolkata", "Pune", "Ahmedabad", "Jaipur", "Lucknow",
+    "Surat", "Nagpur", "Indore", "Bhopal", "Patna",
+    "Chandigarh", "Coimbatore", "Vizag", "Kochi", "Vadodara"
+]
+
+HUB_CAPACITY = {
+    "Mumbai": 5000, "Delhi": 4800, "Bangalore": 4200, "Chennai": 3500,
+    "Hyderabad": 3800, "Kolkata": 3200, "Pune": 2800, "Ahmedabad": 2600,
+    "Jaipur": 2200, "Lucknow": 2000, "Surat": 1800, "Nagpur": 1600,
+    "Indore": 1400, "Bhopal": 1200, "Patna": 1100,
+    "Chandigarh": 1000, "Coimbatore": 900, "Vizag": 850, "Kochi": 800,
+    "Vadodara": 750,
+}
+
+CORRIDORS = {
+    ("Mumbai", "Delhi"): "Western Corridor",
+    ("Delhi", "Kolkata"): "Northern-Eastern Corridor",
+    ("Mumbai", "Bangalore"): "Western-Southern Corridor",
+    ("Chennai", "Bangalore"): "Southern Corridor",
+    ("Delhi", "Jaipur"): "NCR-Rajasthan Corridor",
+    ("Hyderabad", "Chennai"): "Deccan-Southern Corridor",
+    ("Mumbai", "Pune"): "Mumbai-Pune Expressway",
+    ("Ahmedabad", "Mumbai"): "Gujarat-Maharashtra Corridor",
+    ("Kolkata", "Patna"): "Eastern Corridor",
+    ("Delhi", "Lucknow"): "UP Corridor",
+}
 
 WEATHER_RISK = {
     "Clear": 1, "Cloudy": 2, "Rain": 3,
@@ -34,147 +56,74 @@ PRIORITY_RANK = {
 }
 
 ROUTE_SPEED = {
-    "Highway": 80, "Expressway": 95, "City Road": 35,
-    "Rural": 45, "Mixed": 60
+    "FTL": 65, "Carting": 45, "Highway": 80, "Expressway": 95, "City Road": 35, "Rural": 45, "Mixed": 60
 }
 
 VEHICLE_SPEED_FACTOR = {
-    "FTL Truck": 1.0, "Carting Vehicle": 0.75, "Express Van": 1.15,
-    "Mini Truck": 0.9, "Container": 0.85,
+    "FTL Truck": 1.0, "Carting Vehicle": 0.75, "Express Van": 1.15, "Mini Truck": 0.9, "Container": 0.85,
+}
+
+SLA_LIMITS = {
+    "Same-Day": 24, "Express": 48, "Standard": 72, "Economy": 120,
 }
 
 
-# ─── Pipeline Steps ──────────────────────────────────────────────────────────
-
-def load_raw(path: str = "data/raw/logistics_dataset.csv") -> pd.DataFrame:
-    """Load the raw logistics CSV."""
-    df = pd.read_csv(path, parse_dates=["shipment_datetime"])
-    log.info(f"[LOAD]  Raw shape: {df.shape}")
-    return df
-
-
-def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop exact duplicate rows."""
-    before = len(df)
-    df = df.drop_duplicates()
-    log.info(f"[DEDUP] Removed {before - len(df)} duplicates -> {len(df)} rows")
-    return df
+def _get_corridor(src, dst):
+    if (src, dst) in CORRIDORS:
+        return CORRIDORS[(src, dst)]
+    if (dst, src) in CORRIDORS:
+        return CORRIDORS[(dst, src)]
+    return "General Network"
 
 
-def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
-    """Fill missing values: Numerics -> median, Categoricals -> mode."""
-    num_cols = df.select_dtypes(include=[np.number]).columns
-    cat_cols = df.select_dtypes(include=["object"]).columns
-
-    for col in num_cols:
-        if df[col].isna().any():
-            df[col] = df[col].fillna(df[col].median())
-
-    for col in cat_cols:
-        if df[col].isna().any():
-            df[col] = df[col].fillna(df[col].mode()[0])
-
-    log.info(f"[MISS]  Missing values after fill: {df.isna().sum().sum()}")
-    return df
-
-
-def handle_outliers(df: pd.DataFrame, cols=None) -> pd.DataFrame:
-    """Cap outliers using IQR method (1.5x rule) on numeric columns."""
-    if cols is None:
-        cols = ["route_distance", "delay_minutes", "delivery_time_hrs",
-                "traffic_level", "hub_load"]
-    cols = [c for c in cols if c in df.columns]
-
-    capped = 0
-    for col in cols:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
-        before = ((df[col] < lower) | (df[col] > upper)).sum()
-        df[col] = df[col].clip(lower, upper)
-        capped += before
-
-    log.info(f"[OUTLR] Capped {capped} outlier values across {len(cols)} columns")
-    return df
-
-
-def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    """Create domain-specific engineered features."""
-
-    # ── Time-based features ──────────────────────────────────────────────────
-    df["hour_of_day"]   = df["shipment_datetime"].dt.hour
-    df["day_of_week_num"] = df["shipment_datetime"].dt.dayofweek   # 0=Mon
-    df["month"]         = df["shipment_datetime"].dt.month
-    df["is_weekend"]    = (df["day_of_week_num"] >= 5).astype(int)
-    df["is_peak_hour"]  = df["hour_of_day"].apply(
-        lambda h: 1 if (8 <= h <= 10) or (17 <= h <= 20) else 0
-    )
-    df["quarter"]       = df["shipment_datetime"].dt.quarter
-
-    # ── Route-based features ─────────────────────────────────────────────────
-    if "route_id" not in df.columns:
-        df["route_id"] = df["source_hub"] + "_" + df["destination_hub"]
-
-    # Average delay per route (computed from the dataset itself)
-    route_avg_delay = df.groupby("route_id")["delay_minutes"].transform("mean")
-    df["avg_delay_per_route"] = route_avg_delay.round(2)
-
-    # Route shipment volume
-    route_volume = df.groupby("route_id")["shipment_id"].transform("count")
-    df["route_volume"] = route_volume
-
-    # Estimated travel time without delay (hours)
-    df["base_speed"] = df["route_type"].map(ROUTE_SPEED)
-    df["est_travel_hrs"] = (df["route_distance"] / df["base_speed"]).round(3)
-
-    # ── Risk / load features ─────────────────────────────────────────────────
-    df["weather_risk"]    = df["weather_condition"].map(WEATHER_RISK)
-    df["priority_rank"]   = df["shipment_priority"].map(PRIORITY_RANK)
-
-    # Combined congestion score (traffic + hub load)
-    if "congestion_score" not in df.columns:
-        df["congestion_score"] = (
-            0.6 * df["traffic_level"] + 0.4 * df["hub_load"]
-        ).round(3)
-
-    # Delay ratio (actual / estimated travel)
-    df["delay_ratio"] = (
-        df["delay_minutes"] / (df["est_travel_hrs"] * 60 + 1)
-    ).round(3)
-
-    # ── Interaction features ─────────────────────────────────────────────────
-    df["traffic_weather_interaction"] = (
-        df["traffic_level"] * df["weather_risk"]
-    ).round(3)
-
-    df["distance_congestion"] = (
-        df["route_distance"] * df["congestion_score"]
-    ).round(2)
-
-    df["stops_delay_interaction"] = (
-        df["num_stops"] * df["delay_minutes"]
-    ).round(2)
-
-    # ── Vehicle features ─────────────────────────────────────────────────────
-    if "vehicle_type" in df.columns:
-        df["vehicle_speed_factor"] = df["vehicle_type"].map(VEHICLE_SPEED_FACTOR).fillna(1.0)
+def _categorize_time_of_day(hour):
+    if 6 <= hour < 10:
+        return "Morning Rush"
+    elif 10 <= hour < 14:
+        return "Midday"
+    elif 14 <= hour < 18:
+        return "Afternoon"
+    elif 18 <= hour < 22:
+        return "Evening Rush"
     else:
-        df["vehicle_speed_factor"] = 1.0
+        return "Night"
 
-    # ── Hub capacity utilization ─────────────────────────────────────────────
-    if "hub_capacity" in df.columns:
-        df["capacity_utilization"] = (df["hub_load"] * df["hub_capacity"]).round(0)
 
-    # ── SLA margin ───────────────────────────────────────────────────────────
-    if "promised_delivery_time" in df.columns:
-        df["sla_margin_hrs"] = (
-            df["promised_delivery_time"] - df["delivery_time_hrs"]
-        ).round(3)
-
-    log.info(f"[FEAT]  Engineered features added -> shape: {df.shape}")
-    return df
+def map_hub_name(name):
+    if not isinstance(name, str):
+        return "Mumbai"
+    nl = name.lower()
+    for c in HUBS:
+        if c.lower() in nl:
+            return c
+    # Fallbacks based on common keywords
+    if 'bhiwandi' in nl or 'lowerparel' in nl or 'maharashtra' in nl:
+        return 'Mumbai'
+    if 'gurgaon' in nl or 'noida' in nl or 'bilaspur' in nl or 'haryana' in nl:
+        return 'Delhi'
+    if 'bengaluru' in nl or 'karnataka' in nl:
+        return 'Bangalore'
+    if 'kanpur' in nl or 'up' in nl or 'uttar' in nl:
+        return 'Lucknow'
+    if 'gujarat' in nl or 'anand' in nl or 'khambhat' in nl:
+        return 'Ahmedabad'
+    if 'kerala' in nl or 'aluva' in nl:
+        return 'Kochi'
+    if 'tamil' in nl:
+        return 'Chennai'
+    if 'bengal' in nl:
+        return 'Kolkata'
+    if 'rajasthan' in nl:
+        return 'Jaipur'
+    if 'mp' in nl or 'madhya' in nl:
+        return 'Indore'
+    if 'bihar' in nl:
+        return 'Patna'
+    if 'punjab' in nl:
+        return 'Chandigarh'
+    # Deterministic hash fallback
+    h = int(hashlib.md5(name.encode('utf-8')).hexdigest(), 16)
+    return HUBS[h % len(HUBS)]
 
 
 def encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
@@ -215,23 +164,149 @@ def normalize_numerics(df: pd.DataFrame, cols: list = None) -> pd.DataFrame:
     return df
 
 
-def run_pipeline(raw_path: str  = "data/raw/logistics_dataset.csv",
+def run_pipeline(raw_path: str  = r"C:\Users\kanth\Downloads\delivery_data.csv",
                  save_path: str = "data/processed/logistics_processed.csv"
                  ) -> pd.DataFrame:
-    """Execute full preprocessing pipeline end-to-end."""
-
-    df = load_raw(raw_path)
-    df = remove_duplicates(df)
-    df = handle_missing(df)
-    df = handle_outliers(df)
-    df = feature_engineering(df)
-    df = encode_categoricals(df)
-    df = normalize_numerics(df)
-
+    """Execute Delhivery logistics dataset preprocessing pipeline."""
+    log.info(f"[PIPELINE] Starting preprocessing for Delhivery dataset at: {raw_path}")
+    
+    # 1. Load raw data
+    df = pd.read_csv(raw_path)
+    log.info(f"[LOAD] Raw shape: {df.shape}")
+    
+    # 2. Drop duplicates
+    before = len(df)
+    df = df.drop_duplicates()
+    log.info(f"[DEDUP] Removed {before - len(df)} duplicates -> {len(df)} rows")
+    
+    # 3. Drop rows with null trip_uuid, source_name, or destination_name
+    df = df.dropna(subset=["trip_uuid", "source_name", "destination_name"])
+    log.info(f"[CLEAN] After dropping critical NaNs: {df.shape}")
+    
+    # 4. Parse timestamps
+    df["trip_creation_time"] = pd.to_datetime(df["trip_creation_time"])
+    
+    # 5. Group by trip_uuid to aggregate at trip level
+    log.info("[GROUP] Aggregating tracking updates at trip level...")
+    
+    # Determine the number of updates per trip (num_stops equivalent)
+    num_updates = df.groupby("trip_uuid").size()
+    
+    # Aggregate fields by taking the last state of each trip (since updates are cumulative)
+    df_last = df.groupby("trip_uuid").last().reset_index()
+    df_last["num_stops"] = df_last["trip_uuid"].map(num_updates)
+    
+    log.info(f"[GROUP] Grouped into {len(df_last)} unique trips")
+    
+    # 6. Map hubs to the 20 major Indian cities
+    df_last["source_hub"] = df_last["source_name"].apply(map_hub_name)
+    df_last["destination_hub"] = df_last["destination_name"].apply(map_hub_name)
+    df_last["intermediate_hub"] = None
+    df_last["corridor"] = df_last.apply(lambda r: _get_corridor(r["source_hub"], r["destination_hub"]), axis=1)
+    
+    # 7. Map vehicle_type and shipment_priority
+    def assign_priority(row):
+        h = int(hashlib.md5(row['trip_uuid'].encode('utf-8')).hexdigest(), 16)
+        if row['route_type'] == 'FTL':
+            return 'Standard' if (h % 10 < 7) else 'Economy'
+        else:
+            return 'Express' if (h % 10 < 8) else 'Same-Day'
+            
+    df_last["shipment_priority"] = df_last.apply(assign_priority, axis=1)
+    df_last["vehicle_type"] = df_last["route_type"].map({"FTL": "FTL Truck", "Carting": "Express Van"}).fillna("Express Van")
+    df_last["vehicle_speed_factor"] = df_last["vehicle_type"].map(VEHICLE_SPEED_FACTOR).fillna(1.0)
+    
+    # 8. Set up distances and times
+    # Convert actual_time (minutes) to delivery_time_hrs (hours)
+    df_last["delivery_time_hrs"] = (df_last["actual_time"] / 60.0).round(3)
+    df_last["actual_delivery_time"] = df_last["delivery_time_hrs"]
+    df_last["route_distance"] = df_last["actual_distance_to_destination"].round(1)
+    
+    # Delay in minutes
+    df_last["delay_minutes"] = (df_last["actual_time"] - df_last["osrm_time"]).clip(lower=0).round(1)
+    
+    # SLA limit and SLA breach calculation
+    df_last["promised_delivery_time"] = df_last["shipment_priority"].map(SLA_LIMITS)
+    df_last["sla_breach"] = (df_last["delivery_time_hrs"] > df_last["promised_delivery_time"]).astype(int)
+    
+    # 9. Extract temporal features
+    df_last["shipment_datetime"] = df_last["trip_creation_time"]
+    df_last["hour_of_day"] = df_last["shipment_datetime"].dt.hour
+    df_last["day_of_week_num"] = df_last["shipment_datetime"].dt.dayofweek
+    df_last["day_of_week"] = df_last["shipment_datetime"].dt.strftime("%A")
+    df_last["month"] = df_last["shipment_datetime"].dt.month
+    df_last["is_weekend"] = (df_last["day_of_week_num"] >= 5).astype(int)
+    df_last["is_peak_hour"] = df_last["hour_of_day"].apply(
+        lambda h: 1 if (8 <= h <= 10) or (17 <= h <= 20) else 0
+    )
+    df_last["quarter"] = df_last["shipment_datetime"].dt.quarter
+    df_last["time_of_day"] = df_last["hour_of_day"].apply(_categorize_time_of_day)
+    
+    # 10. Map weather condition deterministically based on month
+    def assign_weather(row):
+        dt = row['shipment_datetime']
+        h = int(hashlib.md5(row['trip_uuid'].encode('utf-8')).hexdigest(), 16)
+        month = dt.month
+        if month in [6, 7, 8, 9]:
+            return ['Rain', 'Heavy Rain', 'Storm'][h % 3]
+        elif month in [12, 1, 2]:
+            return ['Fog', 'Cloudy', 'Clear'][h % 3]
+        else:
+            return ['Clear', 'Cloudy'][h % 2]
+            
+    df_last["weather_condition"] = df_last.apply(assign_weather, axis=1)
+    df_last["weather_risk"] = df_last["weather_condition"].map(WEATHER_RISK).fillna(2)
+    df_last["priority_rank"] = df_last["shipment_priority"].map(PRIORITY_RANK).fillna(2)
+    
+    # 11. Calculate hub load and hub capacity
+    hub_counts = df_last["source_hub"].value_counts()
+    min_load = hub_counts.min()
+    max_load = hub_counts.max()
+    # Scale density to load factor [0.2, 1.0]
+    scaled_loads = 0.2 + 0.8 * (hub_counts - min_load) / (max_load - min_load + 1e-9)
+    df_last["hub_load"] = df_last["source_hub"].map(scaled_loads).round(3)
+    df_last["hub_capacity"] = df_last["source_hub"].map(HUB_CAPACITY).fillna(1000)
+    
+    # 12. Calculate traffic level and congestion score
+    # factor = actual_time / osrm_time
+    # scale actual_time/osrm_time factor to traffic level [0.1, 1.0]
+    df_last["traffic_level"] = (0.1 + 0.9 * (df_last["actual_time"] / (df_last["osrm_time"] + 1.0) - 1.0).clip(0, 3) / 3.0).round(3)
+    df_last["congestion_score"] = (0.6 * df_last["traffic_level"] + 0.4 * df_last["hub_load"]).round(3)
+    
+    # 13. Route-specific averages
+    df_last["route_id"] = df_last["source_hub"] + "_" + df_last["destination_hub"]
+    route_avg_delay = df_last.groupby("route_id")["delay_minutes"].transform("mean")
+    df_last["avg_delay_per_route"] = route_avg_delay.round(2)
+    
+    route_volume = df_last.groupby("route_id")["trip_uuid"].transform("count")
+    df_last["route_volume"] = route_volume
+    
+    df_last["base_speed"] = df_last["route_type"].map(ROUTE_SPEED).fillna(50)
+    df_last["est_travel_hrs"] = (df_last["route_distance"] / df_last["base_speed"]).round(3)
+    
+    # 14. Interactions
+    df_last["delay_ratio"] = (df_last["delay_minutes"] / (df_last["est_travel_hrs"] * 60 + 1)).round(3)
+    df_last["traffic_weather_interaction"] = (df_last["traffic_level"] * df_last["weather_risk"]).round(3)
+    df_last["distance_congestion"] = (df_last["route_distance"] * df_last["congestion_score"]).round(2)
+    df_last["stops_delay_interaction"] = (df_last["num_stops"] * df_last["delay_minutes"]).round(2)
+    df_last["capacity_utilization"] = (df_last["hub_load"] * df_last["hub_capacity"]).round(0)
+    df_last["sla_margin_hrs"] = (df_last["promised_delivery_time"] - df_last["delivery_time_hrs"]).round(3)
+    
+    # 15. Rename trip_uuid to shipment_id
+    df_last["shipment_id"] = df_last["trip_uuid"]
+    
+    # 16. Label encoding
+    df_processed = encode_categoricals(df_last)
+    
+    # 17. Min-max normalization
+    df_processed = normalize_numerics(df_processed)
+    
+    # Save processed dataset
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    df.to_csv(save_path, index=False)
-    log.info(f"[SAVE]  Processed data -> {save_path}  shape: {df.shape}")
-    return df
+    df_processed.to_csv(save_path, index=False)
+    log.info(f"[SAVE] Processed data -> {save_path} shape: {df_processed.shape}")
+    
+    return df_processed
 
 
 if __name__ == "__main__":
