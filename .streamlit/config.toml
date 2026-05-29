@@ -1,13 +1,3 @@
-[server]
-headless = true
-port = 8501
-enableCORS = false
-enableXsrfProtection = true
-fileWatcherType = "none"
-maxUploadSize = 5
-maxMessageSize = 200
-runOnSave = false
-
 [browser]
 gatherUsageStats = false
 
@@ -20,3 +10,4 @@ backgroundColor = "#0B0F19"
 secondaryBackgroundColor = "#1E293B"
 textColor = "#F3F4F6"
 font = "sans serif"
+
