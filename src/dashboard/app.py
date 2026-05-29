@@ -842,11 +842,10 @@ def get_shap_feature_importance_chart():
 def cached_bottleneck_insights(_cdf, _risky):
     return generate_bottleneck_insights(_cdf, _risky)
 
-# Initialize data and dependencies
+# Initialize data and dependencies (models lazy-loaded on demand)
 df_full = load_data()
 G       = load_graph(df_full)
 cdf     = load_centrality(G)
-models  = load_models()
 summary = load_summary()
 risky   = load_risky_routes(df_full)
 kpis    = load_summary_kpis(df_full)
@@ -1116,6 +1115,7 @@ elif page_selection == "ETA Intelligence":
         
     with col_out:
         if run_prediction:
+            models = load_models()
             results_row = []
             for m_name, m_obj in models.items():
                 X = build_feature_row(
