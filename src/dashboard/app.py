@@ -65,6 +65,16 @@ def _get_premium_css():
     background: #0A0D16;
   }
   
+  /* Hide Streamlit toolbar, deploy button, footer & hamburger menu */
+  .stAppToolbar, header[data-testid="stHeader"],
+  [data-testid="stToolbar"], [data-testid="stDecoration"],
+  footer, #MainMenu, .stDeployButton,
+  button[title="View app in Streamlit Community Cloud"] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+  }
+  
   /* PREMIUM NAVY-BLACK SIDEBAR GRADIENT */
   section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #081028 0%, #0F172A 60%, #111827 100%) !important;
