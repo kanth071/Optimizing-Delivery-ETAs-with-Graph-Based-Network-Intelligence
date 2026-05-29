@@ -66,13 +66,15 @@ def _get_premium_css():
   }
   
   /* Hide Streamlit toolbar, deploy button, footer & hamburger menu */
-  .stAppToolbar, header[data-testid="stHeader"],
-  [data-testid="stToolbar"], [data-testid="stDecoration"],
+  .stAppToolbar, [data-testid="stToolbar"],
+  [data-testid="stDecoration"],
   footer, #MainMenu, .stDeployButton,
   button[title="View app in Streamlit Community Cloud"] {
     display: none !important;
     visibility: hidden !important;
-    height: 0 !important;
+  }
+  header[data-testid="stHeader"] {
+    background: transparent !important;
   }
   
   /* PREMIUM NAVY-BLACK SIDEBAR GRADIENT */
