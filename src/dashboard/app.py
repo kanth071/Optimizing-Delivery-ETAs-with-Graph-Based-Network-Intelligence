@@ -124,13 +124,7 @@ def _get_premium_css():
     font-weight: 700 !important;
   }
 
-  /* Hide the default radio circle indicator and its marker container */
-  div[data-testid="stRadio"] input[type="radio"] {
-    display: none !important;
-  }
-  div[data-testid="stRadio"] div[data-testid="stMarkerContainer"] {
-    display: none !important;
-  }
+  /* Radio circle indicators visible */
 
   /* Glassmorphism Containers */
   .glass-card {
@@ -906,7 +900,7 @@ with st.sidebar:
             "⚡ Model Performance",
             "⚙️ System Settings"
         ],
-        label_visibility="collapsed"
+        label_visibility="visible"
     )
 
     # 5. Mini Analytics Sidebar Widgets
