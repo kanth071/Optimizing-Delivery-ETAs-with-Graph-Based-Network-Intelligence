@@ -849,13 +849,28 @@ def cached_bottleneck_insights(_cdf, _risky):
     return generate_bottleneck_insights(_cdf, _risky)
 
 # Initialize data and dependencies (models lazy-loaded on demand)
-df_full = load_data()
-G       = load_graph(df_full)
-cdf     = load_centrality(G)
-summary = load_summary()
-risky   = load_risky_routes(df_full)
-kpis    = load_summary_kpis(df_full)
-critical, moderate, low_risk = cached_classify_hubs(cdf)
+_init_error = None
+try:
+    df_full = load_data()
+    G       = load_graph(df_full)
+    cdf     = load_centrality(G)
+    summary = load_summary()
+    risky   = load_risky_routes(df_full)
+    kpis    = load_summary_kpis(df_full)
+    critical, moderate, low_risk = cached_classify_hubs(cdf)
+except Exception as _e:
+    _init_error = str(_e)
+    import traceback
+    traceback.print_exc()
+    # Fallback defaults so sidebar still renders
+    df_full = pd.DataFrame()
+    G = None
+    cdf = pd.DataFrame()
+    summary = {"results": [], "best_model_name": "N/A"}
+    risky = pd.DataFrame()
+    kpis = {"total_shipments": 0, "avg_eta": 0, "on_time_pct": 0, "avg_delay": 0,
+            "network_edges": 0, "unique_routes": 0}
+    critical, moderate, low_risk = [], [], []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -948,6 +963,11 @@ with st.sidebar:
 
 # Extract clean selector string
 page_selection = current_page.split(" ", 1)[-1]
+
+# Show initialization error banner if any
+if _init_error:
+    st.error(f"⚠️ Data initialization error: {_init_error}")
+    st.info("The navigation menu is available. Some features may be limited until the error is resolved.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # VIEW 1: Dashboard Overview
