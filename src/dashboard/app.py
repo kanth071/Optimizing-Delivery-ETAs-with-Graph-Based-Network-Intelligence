@@ -65,10 +65,10 @@ def _get_premium_css():
     background: #0A0D16;
   }
   
-  /* Hide Streamlit toolbar, deploy button, footer & hamburger menu */
+  /* Hide Streamlit toolbar, deploy button & footer */
   .stAppToolbar, [data-testid="stToolbar"],
   [data-testid="stDecoration"],
-  footer, #MainMenu, .stDeployButton,
+  footer, .stDeployButton,
   button[title="View app in Streamlit Community Cloud"] {
     display: none !important;
     visibility: hidden !important;
@@ -85,14 +85,14 @@ def _get_premium_css():
   }
   
   /* ULTRAPREMIUM RADIO NAVIGATION OVERLAY */
-  div[data-testid="stRadio"] > div {
+  div[data-testid="stRadioGroup"] {
     display: flex !important;
     flex-direction: column !important;
     gap: 8px !important;
     padding: 5px 0 !important;
   }
   
-  div[data-testid="stRadio"] label {
+  div[data-testid="stRadioGroup"] label {
     background: rgba(15, 23, 42, 0.35) !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     border-radius: 10px !important;
@@ -107,7 +107,13 @@ def _get_premium_css():
     box-shadow: 0 4px 10px rgba(0,0,0,0.1) !important;
   }
 
-  div[data-testid="stRadio"] label:hover {
+  div[data-testid="stRadioGroup"] label p {
+    color: inherit !important;
+    margin: 0 !important;
+    font-weight: inherit !important;
+  }
+
+  div[data-testid="stRadioGroup"] label:hover {
     background: rgba(34, 211, 238, 0.08) !important;
     border-color: rgba(34, 211, 238, 0.25) !important;
     color: #22D3EE !important;
@@ -115,7 +121,7 @@ def _get_premium_css():
   }
 
   /* Style the checked (active) radio button label */
-  div[data-testid="stRadio"] label:has(input:checked) {
+  div[data-testid="stRadioGroup"] label:has(input:checked) {
     background: linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(139, 92, 246, 0.15)) !important;
     color: #22D3EE !important;
     border-left: 4px solid #22D3EE !important;
@@ -124,7 +130,25 @@ def _get_premium_css():
     font-weight: 700 !important;
   }
 
-  /* Radio circle indicators visible */
+  /* Style the widget label 'Navigation' as a clean uppercase section header */
+  div[data-testid="stRadio"] > label[data-testid="stWidgetLabel"] {
+    color: #94A3B8 !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 8px !important;
+    padding-left: 4px !important;
+    display: block !important;
+  }
+
+  /* Hide the default radio circle indicator and its marker container for a premium card look */
+  div[data-testid="stRadioGroup"] input[type="radio"] {
+    display: none !important;
+  }
+  div[data-testid="stRadioGroup"] div[data-testid="stMarkerContainer"] {
+    display: none !important;
+  }
 
   /* Glassmorphism Containers */
   .glass-card {
