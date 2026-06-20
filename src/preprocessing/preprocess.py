@@ -164,7 +164,7 @@ def normalize_numerics(df: pd.DataFrame, cols: list = None) -> pd.DataFrame:
     return df
 
 
-def run_pipeline(raw_path: str  = r"C:\Users\kanth\Downloads\delivery_data.csv",
+def run_pipeline(raw_path: str  = "data/raw/delivery_data.csv",
                  save_path: str = "data/processed/logistics_processed.csv"
                  ) -> pd.DataFrame:
     """Execute Delhivery logistics dataset preprocessing pipeline."""

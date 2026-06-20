@@ -19,12 +19,8 @@ def banner(msg):
 def main():
     t0 = time.time()
 
-    banner("STEP 1/5 -- Generating Synthetic Dataset")
-    from data.generate_dataset import generate_dataset
-    df_raw = generate_dataset(5000)
-    os.makedirs("data/raw", exist_ok=True)
-    df_raw.to_csv("data/raw/logistics_dataset.csv", index=False)
-    print(f"  Dataset: {df_raw.shape[0]} rows x {df_raw.shape[1]} cols")
+    banner("STEP 1/5 -- Checking Raw Dataset")
+    print("  Using local dataset at data/raw/delivery_data.csv")
 
     banner("STEP 2/5 -- Preprocessing Pipeline")
     from src.preprocessing.preprocess import run_pipeline

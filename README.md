@@ -101,7 +101,7 @@ cd delivery_eta
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Run full pipeline (generates data + trains models)
+# 3. Run full pipeline (preprocesses data + trains models)
 python main.py
 
 # 4. Launch Streamlit dashboard
@@ -155,20 +155,20 @@ print(f"Predicted ETA: {eta_hrs:.2f} hrs")
 
 ## 📊 Dataset <a name="dataset"></a>
 
-Synthetic dataset with **5,000 rows** across 20 Indian logistics hubs.
+Real-world **Delhivery logistics dataset** mapped across 20 major Indian logistics hubs.
 
 | Column | Description |
 |---|---|
-| `source_hub` | Origin city / warehouse |
-| `destination_hub` | Delivery destination |
-| `route_distance` | Distance in km (100–2500) |
-| `traffic_level` | 0.0 (free) to 1.0 (jam) |
-| `weather_condition` | Clear / Cloudy / Rain / Heavy Rain / Fog / Storm |
-| `num_stops` | Intermediate stops (0–6) |
-| `hub_load` | Hub capacity utilization (0–1) |
+| `source_hub` | Origin city / warehouse (mapped from raw source name) |
+| `destination_hub` | Delivery destination (mapped from raw destination name) |
+| `route_distance` | Distance in km |
+| `traffic_level` | Traffic congestion factor based on OSRM travel times |
+| `weather_condition` | Weather condition assigned based on temporal monsoons |
+| `num_stops` | Intermediate stops |
+| `hub_load` | Hub capacity utilization load factor |
 | `shipment_priority` | Economy / Standard / Express / Same-Day |
-| `delay_minutes` | Delay vs ideal travel time |
-| `delivery_time_hrs` | **Target variable** |
+| `delay_minutes` | Actual delay vs OSRM travel time |
+| `delivery_time_hrs` | **Target variable** (actual trip travel time in hours) |
 
 **Engineered features:** `congestion_score`, `weather_risk`, `avg_delay_per_route`, `est_travel_hrs`, `is_peak_hour`, `is_weekend`, etc.
 
